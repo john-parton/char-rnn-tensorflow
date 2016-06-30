@@ -1,83 +1,128 @@
+from __future__ import print_function
+
 import codecs
 import collections
+import itertools
 import operator
 import os
 
 import numpy as np
-from six.moves import cPickle
+from six import PY2
+from six.moves import cPickle, zip, reduce, map
+from random import shuffle
+import gzip
+from multiprocessing import Pool
+import io
+import subprocess
 
-class TextLoader():
+try:
+    import lzma
+except ImportError:
+    from backports import lzma
+
+class TextLoader(object):
+
     def __init__(self, data_dir, batch_size, seq_length, encoding='utf-8'):
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.seq_length = seq_length
         self.encoding = encoding
 
-        input_file = os.path.join(data_dir, "input.txt")
+        # self.input_file = os.path.join(data_dir, "input.txt")
         vocab_file = os.path.join(data_dir, "vocab.pkl")
-        tensor_file = os.path.join(data_dir, "data.npy")
+        size_file = os.path.join(data_dir, "size.pkl")
+        
+        self.input_files = []
+        
+        for root, __, files in os.walk(data_dir, 'input'):
+            for f in files:
+                __, ext = os.path.splitext(f)
+                if ext == '.xz':
+                    self.input_files.append(os.path.join(root, f))
+        
+        # Shuffle for training?
+        shuffle(self.input_files)
 
-        if not (os.path.exists(vocab_file) and os.path.exists(tensor_file)):
+        if not (os.path.exists(vocab_file) and os.path.exists(size_file)):
             print("reading text file")
-            self.preprocess(input_file, vocab_file, tensor_file)
+            self.preprocess(vocab_file, size_file)
         else:
             print("loading preprocessed files")
-            self.load_preprocessed(vocab_file, tensor_file)
-        self.create_batches()
-        self.reset_batch_pointer()
+            self.load_preprocessed(vocab_file, size_file)
 
-    def preprocess(self, input_file, vocab_file, tensor_file):
-        with codecs.open(input_file, "r", encoding=self.encoding) as f:
-            counter = collections.Counter(f.read())
+        self.num_batches = int(self.size / (self.batch_size * self.seq_length))
+
+    def preprocess(self, vocab_file, size_file):
+
+        print("Generating counter")
+        # PY3 code path is slower on PY2 due to missing C optimization
+        if PY2:
+            counter = {}
+            counter_get = counter.get
+            for char in self.get_data():
+                counter_get[char] = counter_get(char, 0) + 1
+        else:
+            counter = collections.Counter(self.get_data())
+        print("Done generating counter")
+
         count_pairs = sorted(counter.items(), key=operator.itemgetter(1), reverse=True)
         self.chars = list(map(operator.itemgetter(0), count_pairs))
         self.vocab_size = len(self.chars)
         self.vocab = { char: i for i, char in enumerate(self.chars) }
         with open(vocab_file, 'wb') as f:
             cPickle.dump(self.chars, f)
-        
-        tensor_size = sum(counter.values())
-        
-        if self.vocab_size <= 2**8:
-            dtype = 'uint8'
-        elif self.vocab_size <= 2**16:
-            dtype ='uint16'
-        else:
-            dtype = 'uint32'
-        
-        self.tensor = np.memmap(tensor_file, mode='r+', dtype=dtype, shape=(tensor_size, ))
-        np.save(tensor_file, self.tensor)
 
-    def load_preprocessed(self, vocab_file, tensor_file):
+        self.size = sum(counter.values())
+
+        with open(size_file, 'wb') as f:
+            cPickle.dump(self.size, f)
+
+    def load_preprocessed(self, vocab_file, size_file):
         with open(vocab_file, 'rb') as f:
             self.chars = cPickle.load(f)
+        with open(size_file, 'rb') as f:
+            self.size = cPickle.load(f)
         self.vocab_size = len(self.chars)
         self.vocab = { char: i for i, char in enumerate(self.chars) }
-        self.tensor = np.memmap(tensor_file, mode='r')
-        self.num_batches = int(self.tensor.size / (self.batch_size *
-                                                   self.seq_length))
 
-    def create_batches(self):
-        self.num_batches = int(self.tensor.size / (self.batch_size *
-                                                   self.seq_length))
+    def get_data(self):
+        def read():
+            total = len(self.input_files)
+            for i, input_file in enumerate(self.input_files):
+                print("Reading file %s/%s" % (i+1, total))
+                with lzma.open(input_file) as uncompressed:
+                    with io.TextIOWrapper(uncompressed, encoding='utf-8') as f:
+                        yield f.read()
+                yield '\x00'
+        return itertools.chain.from_iterable(read())
 
-        # When the data (tesor) is too small, let's give them a better error message
-        if self.num_batches==0:
-            assert False, "Not enough data. Make seq_length and batch_size small."
+    def get_batches(self):
 
-        self.tensor = self.tensor[:self.num_batches * self.batch_size * self.seq_length]
-        xdata = self.tensor
-        ydata = np.copy(self.tensor)
-        ydata[:-1] = xdata[1:]
-        ydata[-1] = xdata[0]
-        self.x_batches = np.split(xdata.reshape(self.batch_size, -1), self.num_batches, 1)
-        self.y_batches = np.split(ydata.reshape(self.batch_size, -1), self.num_batches, 1)
+        # When the data (tensor) is too small, let's give them a better error message
+        if self.num_batches == 0:
+            raise Exception("Not enough data. Make seq_length and batch_size small.")
 
+        tensor = map(self.vocab.get, self.get_data())
+        # Truncate dangling elements
+        tensor = itertools.islice(tensor, self.num_batches * self.batch_size * self.seq_length)
+        
+        peek = next(tensor)
+        left, right = itertools.tee(tensor)
+        
+        def batch(iterable):
+            it = iter(iterable)
+            count = self.batch_size * self.seq_length
+            shape = (self.batch_size, self.seq_length)
+            while True:
+                chunk = list(itertools.islice(it, count))
+                if not chunk:
+                    return
+                arr = np.array(chunk)
+                arr = np.reshape(arr, shape)
+                yield arr
 
-    def next_batch(self):
-        x, y = self.x_batches[self.pointer], self.y_batches[self.pointer]
-        self.pointer += 1
-        return x, y
+        return zip(
+            batch(itertools.chain([peek], left)), 
+            batch(itertools.chain(right, [peek]))
+        )
 
-    def reset_batch_pointer(self):
-        self.pointer = 0

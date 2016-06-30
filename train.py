@@ -62,14 +62,14 @@ def train(args):
         assert ckpt.model_checkpoint_path,"No model path found in checkpoint"
 
         # open old config and check if models are compatible
-        with open(os.path.join(args.init_from, 'config.pkl')) as f:
+        with open(os.path.join(args.init_from, 'config.pkl'), 'rb') as f:
             saved_model_args = cPickle.load(f)
         need_be_same=["model","rnn_size","num_layers","seq_length"]
         for checkme in need_be_same:
             assert vars(saved_model_args)[checkme]==vars(args)[checkme],"Command line argument and saved model disagree on '%s' "%checkme
         
         # open saved vocab/dict and check if vocabs/dicts are compatible
-        with open(os.path.join(args.init_from, 'chars_vocab.pkl')) as f:
+        with open(os.path.join(args.init_from, 'chars_vocab.pkl'), 'rb') as f:
             saved_chars, saved_vocab = cPickle.load(f)
         assert saved_chars==data_loader.chars, "Data and loaded model disagreee on character set!"
         assert saved_vocab==data_loader.vocab, "Data and loaded model disagreee on dictionary mappings!"
@@ -89,11 +89,9 @@ def train(args):
             saver.restore(sess, ckpt.model_checkpoint_path)
         for e in range(args.num_epochs):
             sess.run(tf.assign(model.lr, args.learning_rate * (args.decay_rate ** e)))
-            data_loader.reset_batch_pointer()
             state = model.initial_state.eval()
-            for b in range(data_loader.num_batches):
+            for b, (x, y) in enumerate(data_loader.get_batches()):
                 start = time.time()
-                x, y = data_loader.next_batch()
                 feed = {model.input_data: x, model.targets: y, model.initial_state: state}
                 train_loss, state, _ = sess.run([model.cost, model.final_state, model.train_op], feed)
                 end = time.time()
