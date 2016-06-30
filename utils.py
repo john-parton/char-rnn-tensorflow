@@ -5,6 +5,7 @@ import os
 
 import numpy as np
 from six.moves import cPickle
+from timeit import itertools
 
 class TextLoader():
     def __init__(self, data_dir, batch_size, seq_length, encoding='utf-8'):
@@ -27,8 +28,16 @@ class TextLoader():
         self.reset_batch_pointer()
 
     def preprocess(self, input_file, vocab_file, tensor_file):
-        with codecs.open(input_file, "r", encoding=self.encoding) as f:
-            counter = collections.Counter(f.read())
+        
+        def read_lazy():
+            with codecs.open(input_file, 'r', encoding=self.encoding) as f:
+                for line in f:
+                    yield line
+        
+        print("Generating counter")
+        counter = collections.Counter(itertools.chain.from_iterable(read_lazy()))
+        print("Done generating counter")
+
         count_pairs = sorted(counter.items(), key=operator.itemgetter(1), reverse=True)
         self.chars = list(map(operator.itemgetter(0), count_pairs))
         self.vocab_size = len(self.chars)
@@ -36,12 +45,15 @@ class TextLoader():
         with open(vocab_file, 'wb') as f:
             cPickle.dump(self.chars, f)
 
+        tensor_size = sum(counter.values())
+
+        print("Writing tensor")
         tensor = np.memmap(tensor_file, mode='w+', dtype='uint8', shape=(tensor_size, ))
         get = self.vocab.get
 
-        with codecs.open(input_file, 'r', encoding=self.encoding) as f:
-            for i, char in enumerate(f.read()):
-                tensor[i] = get(char)
+        for i, char in enumerate(itertools.chain.from_iterable(read_lazy())):
+            tensor[i] = get(char)
+        print("Done writing tensor")
 
         self.tensor = tensor
 
