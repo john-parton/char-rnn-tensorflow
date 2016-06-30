@@ -8,34 +8,30 @@ from six.moves import cPickle
 from timeit import itertools
 
 class TextLoader():
+
     def __init__(self, data_dir, batch_size, seq_length, encoding='utf-8'):
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.seq_length = seq_length
         self.encoding = encoding
 
-        input_file = os.path.join(data_dir, "input.txt")
+        self.input_file = os.path.join(data_dir, "input.txt")
         vocab_file = os.path.join(data_dir, "vocab.pkl")
-        tensor_file = os.path.join(data_dir, "data.npy")
+        size_file = os.path.join(data_dir, "size.pkl")
 
-        if not (os.path.exists(vocab_file) and os.path.exists(tensor_file)):
+        if not (os.path.exists(vocab_file) and os.path.exists(size_file)):
             print("reading text file")
-            self.preprocess(input_file, vocab_file, tensor_file)
+            self.preprocess(self.input_file, vocab_file, size_file)
         else:
             print("loading preprocessed files")
-            self.load_preprocessed(vocab_file, tensor_file)
-        self.create_batches()
-        self.reset_batch_pointer()
+            self.load_preprocessed(vocab_file, size_file)
 
-    def preprocess(self, input_file, vocab_file, tensor_file):
-        
-        def read_lazy():
-            with codecs.open(input_file, 'r', encoding=self.encoding) as f:
-                for line in f:
-                    yield line
+        self.num_batches = int(self.size / (self.batch_size * self.seq_length))
+
+    def preprocess(self, input_file, vocab_file, size_file):
         
         print("Generating counter")
-        counter = collections.Counter(itertools.chain.from_iterable(read_lazy()))
+        counter = collections.Counter(self.get_data())
         print("Done generating counter")
 
         count_pairs = sorted(counter.items(), key=operator.itemgetter(1), reverse=True)
@@ -45,48 +41,53 @@ class TextLoader():
         with open(vocab_file, 'wb') as f:
             cPickle.dump(self.chars, f)
 
-        tensor_size = sum(counter.values())
+        self.size = sum(counter.values())
 
-        print("Writing tensor")
-        tensor = np.memmap(tensor_file, mode='w+', dtype='uint8', shape=(tensor_size, ))
-        get = self.vocab.get
+        with open(size_file, 'wb') as f:
+            cPickle.dump(self.size, f)
 
-        for i, char in enumerate(itertools.chain.from_iterable(read_lazy())):
-            tensor[i] = get(char)
-        print("Done writing tensor")
-
-        self.tensor = tensor
-
-    def load_preprocessed(self, vocab_file, tensor_file):
+    def load_preprocessed(self, vocab_file, size_file):
         with open(vocab_file, 'rb') as f:
             self.chars = cPickle.load(f)
+        with open(size_file, 'rb') as f:
+            self.size = cPickle.load(f)
         self.vocab_size = len(self.chars)
         self.vocab = { char: i for i, char in enumerate(self.chars) }
-        self.tensor = np.memmap(tensor_file, mode='r', dtype='uint8')
-        self.num_batches = int(self.tensor.size / (self.batch_size *
-                                                   self.seq_length))
 
-    def create_batches(self):
-        self.num_batches = int(self.tensor.size / (self.batch_size *
-                                                   self.seq_length))
+    def get_data(self):
+        def read_lazy():
+            # This breaks on newlines
+            # Might be better to read fixed chunks with read(2**N)
+            with codecs.open(self.input_file, 'r', encoding=self.encoding) as f:
+                for line in f:
+                    yield line
+        return itertools.chain.from_iterable(read_lazy())
 
-        # When the data (tesor) is too small, let's give them a better error message
-        if self.num_batches==0:
-            assert False, "Not enough data. Make seq_length and batch_size small."
+    def get_batches(self):
 
-        self.tensor = self.tensor[:self.num_batches * self.batch_size * self.seq_length]
-        xdata = self.tensor
-        ydata = np.copy(self.tensor)
-        ydata[:-1] = xdata[1:]
-        ydata[-1] = xdata[0]
-        self.x_batches = np.split(xdata.reshape(self.batch_size, -1), self.num_batches, 1)
-        self.y_batches = np.split(ydata.reshape(self.batch_size, -1), self.num_batches, 1)
+        # When the data (tensor) is too small, let's give them a better error message
+        if self.num_batches == 0:
+            raise Exception("Not enough data. Make seq_length and batch_size small.")
 
+        tensor = itertools.imap(self.vocab.get, self.get_data())
+        # Truncate dangling elements
+        tensor = itertools.islice(tensor, self.num_batches * self.batch_size * self.seq_length)
+        
+        peek = next(tensor)
+        left, right = itertools.tee(tensor)
+        
+        def chunks(iterable):
+            it = iter(iterable)
+            while True:
+                chunk = list(itertools.islice(it, self.batch_size * self.seq_length))
+                if not chunk:
+                    return
+                arr = np.array(chunk)
+                arr = np.reshape(arr, (self.batch_size, self.seq_length))
+                yield arr
 
-    def next_batch(self):
-        x, y = self.x_batches[self.pointer], self.y_batches[self.pointer]
-        self.pointer += 1
-        return x, y
+        return itertools.izip(
+            chunks(itertools.chain([peek], left)), 
+            chunks(itertools.chain(right, [peek]))
+        )
 
-    def reset_batch_pointer(self):
-        self.pointer = 0
