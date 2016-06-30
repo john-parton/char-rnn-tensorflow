@@ -1,8 +1,10 @@
 import codecs
-import os
 import collections
-from six.moves import cPickle
+import operator
+import os
+
 import numpy as np
+from six.moves import cPickle
 
 class TextLoader():
     def __init__(self, data_dir, batch_size, seq_length, encoding='utf-8'):
@@ -26,23 +28,32 @@ class TextLoader():
 
     def preprocess(self, input_file, vocab_file, tensor_file):
         with codecs.open(input_file, "r", encoding=self.encoding) as f:
-            data = f.read()
-        counter = collections.Counter(data)
-        count_pairs = sorted(counter.items(), key=lambda x: -x[1])
-        self.chars, _ = zip(*count_pairs)
+            counter = collections.Counter(f.read())
+        count_pairs = sorted(counter.items(), key=operator.itemgetter(1), reverse=True)
+        self.chars = list(map(operator.itemgetter(0), count_pairs))
         self.vocab_size = len(self.chars)
-        self.vocab = dict(zip(self.chars, range(len(self.chars))))
+        self.vocab = { char: i for i, char in enumerate(self.chars) }
         with open(vocab_file, 'wb') as f:
             cPickle.dump(self.chars, f)
-        self.tensor = np.array(list(map(self.vocab.get, data)))
+        
+        tensor_size = sum(counter.values())
+        
+        if self.vocab_size <= 2**8:
+            dtype = 'uint8'
+        elif self.vocab_size <= 2**16:
+            dtype ='uint16'
+        else:
+            dtype = 'uint32'
+        
+        self.tensor = np.memmap(tensor_file, mode='r+', dtype=dtype, shape=(tensor_size, ))
         np.save(tensor_file, self.tensor)
 
     def load_preprocessed(self, vocab_file, tensor_file):
         with open(vocab_file, 'rb') as f:
             self.chars = cPickle.load(f)
         self.vocab_size = len(self.chars)
-        self.vocab = dict(zip(self.chars, range(len(self.chars))))
-        self.tensor = np.load(tensor_file)
+        self.vocab = { char: i for i, char in enumerate(self.chars) }
+        self.tensor = np.memmap(tensor_file, mode='r')
         self.num_batches = int(self.tensor.size / (self.batch_size *
                                                    self.seq_length))
 
