@@ -35,18 +35,24 @@ class TextLoader():
         self.vocab = { char: i for i, char in enumerate(self.chars) }
         with open(vocab_file, 'wb') as f:
             cPickle.dump(self.chars, f)
-        
+
         tensor_size = sum(counter.values())
-        
+
         if self.vocab_size <= 2**8:
             dtype = 'uint8'
         elif self.vocab_size <= 2**16:
             dtype ='uint16'
         else:
             dtype = 'uint32'
-        
-        self.tensor = np.memmap(tensor_file, mode='r+', dtype=dtype, shape=(tensor_size, ))
-        np.save(tensor_file, self.tensor)
+
+        tensor = np.memmap(tensor_file, mode='w+', dtype=dtype, shape=(tensor_size, ))
+        get = self.vocab.get
+
+        with codecs.open(input_file, 'r', encoding=self.encoding) as f:
+            for i, char in enumerate(f.read()):
+                tensor[i] = get(char)
+
+        self.tensor = tensor
 
     def load_preprocessed(self, vocab_file, tensor_file):
         with open(vocab_file, 'rb') as f:
