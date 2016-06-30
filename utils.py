@@ -1,13 +1,14 @@
 import codecs
 import collections
+import itertools
 import operator
 import os
 
 import numpy as np
 from six.moves import cPickle
-from timeit import itertools
 
-class TextLoader():
+
+class TextLoader(object):
 
     def __init__(self, data_dir, batch_size, seq_length, encoding='utf-8'):
         self.data_dir = data_dir
@@ -76,7 +77,7 @@ class TextLoader():
         peek = next(tensor)
         left, right = itertools.tee(tensor)
         
-        def chunks(iterable):
+        def batch(iterable):
             it = iter(iterable)
             while True:
                 chunk = list(itertools.islice(it, self.batch_size * self.seq_length))
@@ -87,7 +88,7 @@ class TextLoader():
                 yield arr
 
         return itertools.izip(
-            chunks(itertools.chain([peek], left)), 
-            chunks(itertools.chain(right, [peek]))
+            batch(itertools.chain([peek], left)), 
+            batch(itertools.chain(right, [peek]))
         )
 
