@@ -79,12 +79,14 @@ class TextLoader(object):
         
         def batch(iterable):
             it = iter(iterable)
+            count = self.batch_size * self.seq_length
+            shape = (self.batch_size, self.seq_length)
             while True:
-                chunk = list(itertools.islice(it, self.batch_size * self.seq_length))
+                chunk = list(itertools.islice(it, count))
                 if not chunk:
                     return
                 arr = np.array(chunk)
-                arr = np.reshape(arr, (self.batch_size, self.seq_length))
+                arr = np.reshape(arr, shape)
                 yield arr
 
         return itertools.izip(
