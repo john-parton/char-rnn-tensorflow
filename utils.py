@@ -5,6 +5,7 @@ import operator
 import os
 
 import numpy as np
+from six import PY2
 from six.moves import cPickle
 
 
@@ -32,7 +33,14 @@ class TextLoader(object):
     def preprocess(self, input_file, vocab_file, size_file):
         
         print("Generating counter")
-        counter = collections.Counter(self.get_data())
+        # PY3 code path is slower on PY2 due to missing C optimization
+        if six.PY2:
+            counter = {}
+            counter_get = counter.get
+            for char in self.get_data():
+                counter_get[char] = counter_get(char, 0) + 1
+        else:
+            counter = collections.Counter(self.get_data())
         print("Done generating counter")
 
         count_pairs = sorted(counter.items(), key=operator.itemgetter(1), reverse=True)
