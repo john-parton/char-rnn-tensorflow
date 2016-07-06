@@ -3,6 +3,7 @@ import numpy as np
 import tensorflow as tf
 
 import argparse
+from datetime import timedelta
 import time
 import os
 from six.moves import cPickle
@@ -81,6 +82,9 @@ def train(args):
         
     model = Model(args)
 
+    total_batches = args.num_epochs * data_loader.num_batches
+    seconds_remaining = 0
+
     with tf.Session() as sess:
         tf.initialize_all_variables().run()
         saver = tf.train.Saver(tf.all_variables())
@@ -94,11 +98,14 @@ def train(args):
                 start = time.time()
                 feed = {model.input_data: x, model.targets: y, model.initial_state: state}
                 train_loss, state, _ = sess.run([model.cost, model.final_state, model.train_op], feed)
-                end = time.time()
-                print("{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
-                    .format(e * data_loader.num_batches + b,
-                            args.num_epochs * data_loader.num_batches,
-                            e, train_loss, end - start))
+                batch_time = time.time() - start
+                batches_completed = e * data_loader.num_batches + b
+                # Seconds remaining is smoothed
+                seconds_remaining = ((total_batches - batches_completed) * batch_time + 255 * seconds_remaining) / 256
+                time_remaining = timedelta(seconds=int(seconds_remaining))
+                print("{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}, time remaing = {}" \
+                    .format(batches_completed, total_batches, e, train_loss,
+                            batch_time, time_remaining))
                 if (e * data_loader.num_batches + b) % args.save_every == 0\
                     or (e==args.num_epochs-1 and b == data_loader.num_batches-1): # save for the last result
                     checkpoint_path = os.path.join(args.save_dir, 'model.ckpt')
