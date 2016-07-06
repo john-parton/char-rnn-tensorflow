@@ -8,8 +8,8 @@ import itertools
 from multiprocessing import Pool
 import operator
 import os
-import subprocess
 from random import shuffle
+import subprocess
 
 import numpy as np
 from six import PY2
@@ -53,7 +53,6 @@ class TextLoader(object):
         self.num_batches = int(self.size / (self.batch_size * self.seq_length))
 
     def preprocess(self, vocab_file, size_file):
-
         print("Generating counter")
         # PY3 code path is slower on PY2 due to missing C optimization
         if PY2:
