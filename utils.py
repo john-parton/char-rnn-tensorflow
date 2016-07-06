@@ -6,7 +6,7 @@ import os
 
 import numpy as np
 from six import PY2
-from six.moves import cPickle
+from six.moves import cPickle, map, zip
 
 
 class TextLoader(object):
@@ -34,7 +34,7 @@ class TextLoader(object):
         
         print("Generating counter")
         # PY3 code path is slower on PY2 due to missing C optimization
-        if six.PY2:
+        if PY2:
             counter = {}
             counter_get = counter.get
             for char in self.get_data():
@@ -75,10 +75,9 @@ class TextLoader(object):
     def get_batches(self):
 
         # When the data (tensor) is too small, let's give them a better error message
-        if self.num_batches == 0:
-            raise Exception("Not enough data. Make seq_length and batch_size small.")
+        assert self.num_batches > 0, "Not enough data. Make seq_length and batch_size small."
 
-        tensor = itertools.imap(self.vocab.get, self.get_data())
+        tensor = map(self.vocab.get, self.get_data())
         # Truncate dangling elements
         tensor = itertools.islice(tensor, self.num_batches * self.batch_size * self.seq_length)
         
@@ -97,7 +96,7 @@ class TextLoader(object):
                 arr = np.reshape(arr, shape)
                 yield arr
 
-        return itertools.izip(
+        return zip(
             batch(itertools.chain([peek], left)), 
             batch(itertools.chain(right, [peek]))
         )
