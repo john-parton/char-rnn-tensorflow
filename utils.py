@@ -2,18 +2,18 @@ from __future__ import print_function
 
 import codecs
 import collections
+import gzip
+import io
 import itertools
+from multiprocessing import Pool
 import operator
 import os
+import subprocess
+from random import shuffle
 
 import numpy as np
 from six import PY2
 from six.moves import cPickle, zip, reduce, map
-from random import shuffle
-import gzip
-from multiprocessing import Pool
-import io
-import subprocess
 
 try:
     import lzma
@@ -99,8 +99,7 @@ class TextLoader(object):
     def get_batches(self):
 
         # When the data (tensor) is too small, let's give them a better error message
-        if self.num_batches == 0:
-            raise Exception("Not enough data. Make seq_length and batch_size small.")
+        assert self.num_batches > 0, "Not enough data. Make seq_length and batch_size small."
 
         tensor = map(self.vocab.get, self.get_data())
         # Truncate dangling elements
