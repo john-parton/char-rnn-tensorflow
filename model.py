@@ -3,6 +3,7 @@ from tensorflow.python.ops import rnn_cell
 from tensorflow.python.ops import seq2seq
 
 import numpy as np
+import itertools
 
 class Model():
     def __init__(self, args, infer=False):
@@ -58,7 +59,7 @@ class Model():
         optimizer = tf.train.AdamOptimizer(self.lr)
         self.train_op = optimizer.apply_gradients(zip(grads, tvars))
 
-    def sample(self, sess, chars, vocab, num=200, prime='The ', sampling_type=1):
+    def stream(self, sess, chars, vocab, prime=u'The ', sampling_type=1):
         state = self.cell.zero_state(1, tf.float32).eval()
         for char in prime[:-1]:
             x = np.zeros((1, 1))
@@ -71,9 +72,11 @@ class Model():
             s = np.sum(weights)
             return(int(np.searchsorted(t, np.random.rand(1)*s)))
 
-        ret = prime
+        for char in prime:
+            yield char
+
         char = prime[-1]
-        for n in range(num):
+        while True:
             x = np.zeros((1, 1))
             x[0, 0] = vocab[char]
             feed = {self.input_data: x, self.initial_state:state}
@@ -90,9 +93,10 @@ class Model():
             else: # sampling_type == 1 default:
                 sample = weighted_pick(p)
 
-            pred = chars[sample]
-            ret += pred
-            char = pred
-        return ret
+            char = chars[sample]
+            yield char
 
+    def sample(self, sess, chars, vocab, num=200, prime=u'The ', sampling_type=1):
+        stream = self.stream(sess, chars, vocab, prime=prime, sampling_type=sampling_type)
+        return u''.join(itertools.islice(stream, num))
 
