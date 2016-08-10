@@ -9,6 +9,7 @@ from six.moves import cPickle
 
 from utils import TextLoader
 from model import Model
+from stats import RunningStats
 
 def main():
     parser = argparse.ArgumentParser()
@@ -81,9 +82,14 @@ def train(args):
         
     model = Model(args)
 
+    train_loss_stats = RunningStats()
+    duration_stats = RunningStats()
+
     with tf.Session() as sess:
         tf.initialize_all_variables().run()
         saver = tf.train.Saver(tf.all_variables())
+        train_loss_stats.reset()
+        duration_stats.reset()
         # restore model
         if args.init_from is not None:
             saver.restore(sess, ckpt.model_checkpoint_path)
@@ -96,11 +102,13 @@ def train(args):
                 x, y = data_loader.next_batch()
                 feed = {model.input_data: x, model.targets: y, model.initial_state: state}
                 train_loss, state, _ = sess.run([model.cost, model.final_state, model.train_op], feed)
-                end = time.time()
-                print("{}/{} (epoch {}), train_loss = {:.3f}, time/batch = {:.3f}" \
+                duration = time.time() - start
+                train_loss_stats.push(train_loss)
+                duration_stats.push(duration)
+                print("{}/{} (epoch {}), train_loss = {:.3f} (mean = {:.3f}, std. dev. = {:.3f}), time/batch = {:.3f} (mean = {:.3f})" \
                     .format(e * data_loader.num_batches + b,
                             args.num_epochs * data_loader.num_batches,
-                            e, train_loss, end - start))
+                            e, train_loss, train_loss_stats.mean, train_loss_stats.standard_deviation, duration, duration_stats.mean))
                 if (e * data_loader.num_batches + b) % args.save_every == 0\
                     or (e==args.num_epochs-1 and b == data_loader.num_batches-1): # save for the last result
                     checkpoint_path = os.path.join(args.save_dir, 'model.ckpt')
